@@ -48,13 +48,13 @@ func (o *OpenWeatherClient) Coordinates(city string) (*models.Cordinates, error)
 	}, nil
 }
 
-func (o *OpenWeatherClient) Weather(lat, lon float64) (*models.Weather, error) {
-	op := "clients.openwather.weather"
-	url := "https://api.openweathermap.org/data/2.5/weather?lat=%f&lon=%f&appid=%s&units=metric"
+func (o *OpenWeatherClient) CurrentWeather(lat, lon float64) (*models.Weather, error) {
+	op := "clients.openwather.currentweather"
+	url := "https://api.openweathermap.org/data/2.5/weather?lat=%f&lon=%f&appid=%s&units=metric&lang=ru"
 
 	resp, err := http.Get(fmt.Sprintf(url, lat, lon, o.apiKey))
 	if err != nil {
-		return &models.Weather{}, fmt.Errorf("error get weather in %s: %w", op, err)
+		return &models.Weather{}, fmt.Errorf("error get current weather in %s: %w", op, err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -69,6 +69,52 @@ func (o *OpenWeatherClient) Weather(lat, lon float64) (*models.Weather, error) {
 	}
 
 	return &models.Weather{
-		Temp: weatherResp.Main.Temp,
+		Description: weatherResp.Weather[0].Description,
+		Temp:        weatherResp.Main.Temp,
+		Humidity:    weatherResp.Main.Humidity,
+		Speed:       weatherResp.Wind.Speed,
 	}, nil
+}
+
+func (o *OpenWeatherClient) ForecastWeather(lat, lon float64) (*[]models.Weather, error) {
+	op := "clients.openwather.forecastweather"
+	url := "https://api.openweathermap.org/data/2.5/forecast?lat=%f&lon=%f&appid=%s&units=metric&lang=ru"
+
+	resp, err := http.Get(fmt.Sprintf(url, lat, lon, o.apiKey))
+	if err != nil {
+		return &[]models.Weather{}, fmt.Errorf("error get forecast weather in %s: %w", op, err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return &[]models.Weather{}, fmt.Errorf("error bad status in %s: %d", op, resp.StatusCode)
+	}
+
+	var (
+		forecastWeatherResp models.ForecastWeatherResponse
+		forecastWeather     []models.Weather
+	)
+
+	err = json.NewDecoder(resp.Body).Decode(&forecastWeatherResp)
+	if err != nil {
+		return &[]models.Weather{}, fmt.Errorf("error unmarshal response in %s: %w", op, err)
+	}
+
+	for _, item := range forecastWeatherResp.List {
+		weather := models.Weather{
+			Date:        item.Date, // или item.DtTxt, в зависимости от вашего API
+			Description: "",
+			Temp:        item.Main.Temp,
+			Humidity:    item.Main.Humidity,
+			Speed:       item.Wind.Speed,
+		}
+
+		// Берем первое описание погоды (если массив weather не пустой)
+		if len(item.Weather) > 0 {
+			weather.Description = item.Weather[0].Description
+		}
+
+		forecastWeather = append(forecastWeather, weather)
+	}
+
+	return &forecastWeather, nil
 }
