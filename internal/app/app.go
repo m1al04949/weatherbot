@@ -39,6 +39,7 @@ func RunBot() error {
 	// Initialize Handler
 	handler := handler.New(log, bot, owClient)
 
+	// Start listening
 	handler.Start()
 
 	return nil
