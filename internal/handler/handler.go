@@ -3,12 +3,12 @@ package handler
 import (
 	"fmt"
 	"log/slog"
-	"math"
 	"strings"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/m1al04949/weatherbot/internal/clients/openweather"
+	f "github.com/m1al04949/weatherbot/internal/lib/format"
 	"github.com/m1al04949/weatherbot/internal/models"
 )
 
@@ -17,9 +17,6 @@ type Handler struct {
 	bot      *tgbotapi.BotAPI
 	owClient *openweather.OpenWeatherClient
 }
-
-const dateTimeFormat = "2006-01-02 15:04:05"
-const dateFormat = "2006-01-02"
 
 var currentLocation models.CordinatesResponse
 
@@ -152,7 +149,7 @@ func (h *Handler) messageCurrentWeather(update tgbotapi.Update) {
 	}
 
 	text.WriteString(fmt.Sprintf("Прогноз погоды в населенном пункте %s. \n \n", currentLocation.Name))
-	text.WriteString(formatWeatherItem(*weather))
+	text.WriteString(f.FormatWeatherMessage(*weather))
 
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID, text.String())
 	msg.ReplyToMessageID = update.Message.MessageID
@@ -165,7 +162,7 @@ func (h *Handler) messageForecast(update tgbotapi.Update) {
 
 	var text strings.Builder
 
-	todayDate := time.Now().Format(dateFormat)
+	todayDate := time.Now().Format(f.DateFormat)
 	targetHour := 13 // on 13:00 every next day
 	replyKeyboard := tgbotapi.NewReplyKeyboard(
 		tgbotapi.NewKeyboardButtonRow(
@@ -191,20 +188,20 @@ func (h *Handler) messageForecast(update tgbotapi.Update) {
 	processedDays := make(map[string]bool)
 
 	for _, item := range *forecast {
-		itemTime, err := time.Parse(dateTimeFormat, item.Date)
+		itemTime, err := time.Parse(f.DateTimeFormat, item.Date)
 		if err != nil {
 			h.log.Error(err.Error())
 			continue
 		}
 
 		// Today
-		if itemTime.Format(dateFormat) == todayDate {
+		if itemTime.Format(f.DateFormat) == todayDate {
 			todayForecast = append(todayForecast, item)
 			continue
 		}
 
 		// Next day on 13:00
-		dateStr := itemTime.Format(dateFormat)
+		dateStr := itemTime.Format(f.DateFormat)
 		if !processedDays[dateStr] && itemTime.Hour() >= targetHour-1 && itemTime.Hour() <= targetHour+1 {
 			nextDaysForecast = append(nextDaysForecast, item)
 			processedDays[dateStr] = true
@@ -216,47 +213,18 @@ func (h *Handler) messageForecast(update tgbotapi.Update) {
 	// Today
 	text.WriteString("=== Сегодня ===\n")
 	for _, item := range todayForecast {
-		text.WriteString(formatWeatherItem(item))
+		text.WriteString(f.FormatWeatherMessage(item))
 	}
 
 	// Next days
 	if len(nextDaysForecast) > 0 {
 		text.WriteString("\n=== На следующие дни ===\n")
 		for _, item := range nextDaysForecast {
-			text.WriteString(formatWeatherItem(item))
+			text.WriteString(f.FormatWeatherMessage(item))
 		}
 	}
 
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID, text.String())
 	msg.ReplyMarkup = replyKeyboard
 	h.bot.Send(msg)
-}
-
-// Help function
-func formatWeatherItem(item models.Weather) string {
-
-	var result string
-
-	today := time.Now().Format(dateFormat)
-
-	itemTime, _ := time.Parse("2006-01-02 15:04:05", item.Date)
-
-	switch {
-	case item.Date == "":
-		result = "Сегодня"
-	case itemTime.Format(dateFormat) == today:
-		result = fmt.Sprintf("в %s", itemTime.Format("15:04"))
-	default:
-		result = itemTime.Format("02.01")
-	}
-
-	result = fmt.Sprintf("%s: температура %d°C, %s, влажность %d%%, ветер %d м/с\n",
-		result,
-		int(math.Round(item.Temp)),
-		item.Description,
-		item.Humidity,
-		int(math.Round(item.Speed)),
-	)
-
-	return result
 }
