@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strings"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/m1al04949/weatherbot/internal/clients/openweather"
@@ -16,8 +18,12 @@ type Handler struct {
 	owClient *openweather.OpenWeatherClient
 }
 
+const dateTimeFormat = "2006-01-02 15:04:05"
+const dateFormat = "2006-01-02"
+
 var currentLocation models.CordinatesResponse
 
+// Init handler
 func New(log *slog.Logger, bot *tgbotapi.BotAPI, owClient *openweather.OpenWeatherClient) *Handler {
 	return &Handler{
 		log:      log,
@@ -31,12 +37,13 @@ func (h *Handler) Start() {
 	u.Timeout = 60
 
 	updates := h.bot.GetUpdatesChan(u)
-
+	// Check updates
 	for update := range updates {
 		h.handlerUpdate(update)
 	}
 }
 
+// Processing new updates
 func (h *Handler) handlerUpdate(update tgbotapi.Update) {
 	if update.Message == nil {
 		return
@@ -53,13 +60,13 @@ func (h *Handler) handlerUpdate(update tgbotapi.Update) {
 		return
 	}
 
-	// Handle Mode
+	// Get Handle Mode
 	if update.Message.Text == "Ввести вручную" {
 		h.messageOther(update.Message.Chat.ID)
 		return
 	}
 
-	// Forecast
+	// Get Forecast
 	if update.Message.Text == "Прогноз" {
 		h.messageForecast(update)
 		return
@@ -87,33 +94,10 @@ func (h *Handler) handlerUpdate(update tgbotapi.Update) {
 	currentLocation.Name = update.Message.Text
 	currentLocation.Lat = cord.Lat
 	currentLocation.Lon = cord.Lon
-	weather, err := h.owClient.CurrentWeather(cord.Lat, cord.Lon)
-	if err != nil {
-		h.log.Error(err.Error())
-		msg := tgbotapi.NewMessage(
-			update.Message.Chat.ID,
-			fmt.Sprintf("Погода в населенном пункте %s не определена", update.Message.Text))
-		msg.ReplyToMessageID = update.Message.MessageID
-		msg.ReplyMarkup = replyKeyboard
-		h.bot.Send(msg)
-		return
-	}
-	msg := tgbotapi.NewMessage(
-		update.Message.Chat.ID,
-		fmt.Sprintf(`Погода в населенном пункте %s.
-Температура %d °C, %s.
-Влажность %d%%.
-Скорость ветра %d м/с.`,
-			update.Message.Text,
-			int(math.Round(weather.Temp)), weather.Description,
-			weather.Humidity,
-			int(math.Round(weather.Speed)),
-		))
-	msg.ReplyToMessageID = update.Message.MessageID
-	msg.ReplyMarkup = replyKeyboard
-	h.bot.Send(msg)
+	h.messageCurrentWeather(update)
 }
 
+// /start message
 func (h *Handler) messageStart(id int64) {
 	replyKeyboard := tgbotapi.NewReplyKeyboard(
 		tgbotapi.NewKeyboardButtonRow(
@@ -135,6 +119,7 @@ func (h *Handler) messageStart(id int64) {
 	h.bot.Send(msg)
 }
 
+// other message
 func (h *Handler) messageOther(id int64) {
 
 	msg := tgbotapi.NewMessage(id, "Введите имя населенного пункта")
@@ -143,16 +128,52 @@ func (h *Handler) messageOther(id int64) {
 	h.bot.Send(msg)
 }
 
+// current weather message
+func (h *Handler) messageCurrentWeather(update tgbotapi.Update) {
+	var text strings.Builder
+
+	replyKeyboard := tgbotapi.NewReplyKeyboard(
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("Прогноз"),
+			tgbotapi.NewKeyboardButton("Назад"),
+		),
+	)
+
+	weather, err := h.owClient.CurrentWeather(currentLocation.Lat, currentLocation.Lon)
+	if err != nil {
+		h.log.Error(err.Error())
+		msg := tgbotapi.NewMessage(
+			update.Message.Chat.ID,
+			fmt.Sprintf("Погода в населенном пункте %s не определена", update.Message.Text))
+		msg.ReplyToMessageID = update.Message.MessageID
+		msg.ReplyMarkup = replyKeyboard
+		h.bot.Send(msg)
+		return
+	}
+
+	text.WriteString(fmt.Sprintf("Прогноз погоды в населенном пункте %s. \n \n", currentLocation.Name))
+	text.WriteString(formatWeatherItem(*weather))
+
+	msg := tgbotapi.NewMessage(update.Message.Chat.ID, text.String())
+	msg.ReplyToMessageID = update.Message.MessageID
+	msg.ReplyMarkup = replyKeyboard
+	h.bot.Send(msg)
+}
+
+// forecast message handler
 func (h *Handler) messageForecast(update tgbotapi.Update) {
 
-	var text string
+	var text strings.Builder
 
+	todayDate := time.Now().Format(dateFormat)
+	targetHour := 13 // on 13:00 every next day
 	replyKeyboard := tgbotapi.NewReplyKeyboard(
 		tgbotapi.NewKeyboardButtonRow(
 			tgbotapi.NewKeyboardButton("Назад"),
 		),
 	)
 
+	// Get forecast
 	forecast, err := h.owClient.ForecastWeather(currentLocation.Lat, currentLocation.Lon)
 	if err != nil {
 		h.log.Error(err.Error())
@@ -165,18 +186,77 @@ func (h *Handler) messageForecast(update tgbotapi.Update) {
 		return
 	}
 
-	for _, day := range *forecast {
-		if text == "" {
-			text = fmt.Sprintf("Прогноз в населенном пункте %s. \n",
-				currentLocation.Name)
+	// Filter forecast
+	var todayForecast, nextDaysForecast []models.Weather
+	processedDays := make(map[string]bool)
+
+	for _, item := range *forecast {
+		itemTime, err := time.Parse(dateTimeFormat, item.Date)
+		if err != nil {
+			h.log.Error(err.Error())
+			continue
 		}
 
-		text = text + fmt.Sprintf("%s. Температура %d °C, %s. Влажность %d%%. Скорость ветра %d м/с. \n",
-			day.Date, int(math.Round(day.Temp)), day.Description, day.Humidity, int(math.Round(day.Speed)))
+		// Today
+		if itemTime.Format(dateFormat) == todayDate {
+			todayForecast = append(todayForecast, item)
+			continue
+		}
+
+		// Next day on 13:00
+		dateStr := itemTime.Format(dateFormat)
+		if !processedDays[dateStr] && itemTime.Hour() >= targetHour-1 && itemTime.Hour() <= targetHour+1 {
+			nextDaysForecast = append(nextDaysForecast, item)
+			processedDays[dateStr] = true
+		}
 	}
 
-	msg := tgbotapi.NewMessage(update.Message.Chat.ID, text)
-	msg.ReplyToMessageID = update.Message.MessageID
+	text.WriteString(fmt.Sprintf("Прогноз погоды в населенном пункте %s. \n \n", currentLocation.Name))
+
+	// Today
+	text.WriteString("=== Сегодня ===\n")
+	for _, item := range todayForecast {
+		text.WriteString(formatWeatherItem(item))
+	}
+
+	// Next days
+	if len(nextDaysForecast) > 0 {
+		text.WriteString("\n=== На следующие дни ===\n")
+		for _, item := range nextDaysForecast {
+			text.WriteString(formatWeatherItem(item))
+		}
+	}
+
+	msg := tgbotapi.NewMessage(update.Message.Chat.ID, text.String())
 	msg.ReplyMarkup = replyKeyboard
 	h.bot.Send(msg)
+}
+
+// Help function
+func formatWeatherItem(item models.Weather) string {
+
+	var result string
+
+	today := time.Now().Format(dateFormat)
+
+	itemTime, _ := time.Parse("2006-01-02 15:04:05", item.Date)
+
+	switch {
+	case item.Date == "":
+		result = "Сегодня"
+	case itemTime.Format(dateFormat) == today:
+		result = fmt.Sprintf("в %s", itemTime.Format("15:04"))
+	default:
+		result = itemTime.Format("02.01")
+	}
+
+	result = fmt.Sprintf("%s: температура %d°C, %s, влажность %d%%, ветер %d м/с\n",
+		result,
+		int(math.Round(item.Temp)),
+		item.Description,
+		item.Humidity,
+		int(math.Round(item.Speed)),
+	)
+
+	return result
 }
