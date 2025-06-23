@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/m1al04949/weatherbot/internal/clients/huggingface"
 	"github.com/m1al04949/weatherbot/internal/clients/openweather"
 	f "github.com/m1al04949/weatherbot/internal/lib/format"
 	"github.com/m1al04949/weatherbot/internal/models"
@@ -16,16 +17,18 @@ type Handler struct {
 	log      *slog.Logger
 	bot      *tgbotapi.BotAPI
 	owClient *openweather.OpenWeatherClient
+	hfClient *huggingface.HuggingFaceClient
 }
 
 var currentLocation models.CordinatesResponse
 
 // Init handler
-func New(log *slog.Logger, bot *tgbotapi.BotAPI, owClient *openweather.OpenWeatherClient) *Handler {
+func New(log *slog.Logger, bot *tgbotapi.BotAPI, owClient *openweather.OpenWeatherClient, hfClient *huggingface.HuggingFaceClient) *Handler {
 	return &Handler{
 		log:      log,
 		bot:      bot,
 		owClient: owClient,
+		hfClient: hfClient,
 	}
 }
 
@@ -195,7 +198,7 @@ func (h *Handler) messageForecast(update tgbotapi.Update) {
 		}
 
 		// Today
-		if itemTime.Format(f.DateFormat) == todayDate {
+		if itemTime.Format(f.DateFormat) == todayDate && itemTime.Hour() > time.Now().Hour() {
 			todayForecast = append(todayForecast, item)
 			continue
 		}
@@ -208,21 +211,40 @@ func (h *Handler) messageForecast(update tgbotapi.Update) {
 		}
 	}
 
+	// Formating New forecast
 	text.WriteString(fmt.Sprintf("Прогноз погоды в населенном пункте %s. \n \n", currentLocation.Name))
 
 	// Today
-	text.WriteString("=== Сегодня ===\n")
+	text.WriteString("============= Сегодня ============\n")
+	text.WriteString("┌─────────────────────────┐\n")
+	text.WriteString("│ Время   Температура   Погода   Ветер \n")
 	for _, item := range todayForecast {
 		text.WriteString(f.FormatWeatherMessage(item))
 	}
+	text.WriteString("└─────────────────────────┘")
 
 	// Next days
 	if len(nextDaysForecast) > 0 {
-		text.WriteString("\n=== На следующие дни ===\n")
+		text.WriteString("\n======== На следующие дни ========\n")
+		text.WriteString("┌─────────────────────────┐\n")
+		text.WriteString("│ День    Температура   Погода    Ветер \n")
 		for _, item := range nextDaysForecast {
 			text.WriteString(f.FormatWeatherMessage(item))
 		}
+		text.WriteString("└─────────────────────────┘")
 	}
+
+	// Generate image
+	// image, err := h.hfClient.GenerateWithHuggingFace(text.String())
+	// if err != nil {
+	// 	h.log.Error(fmt.Sprintf("failed to generate image: %s", err.Error()))
+	// }
+	// photo := tgbotapi.FileBytes{
+	// 	Name:  "weather_forecast.png",
+	// 	Bytes: image,
+	// }
+	// msg := tgbotapi.NewPhoto(update.Message.Chat.ID, photo)
+	// msg.Caption = "Прогноз погоды 🌤️"
 
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID, text.String())
 	msg.ReplyMarkup = replyKeyboard

@@ -12,6 +12,7 @@ type Config struct {
 	Env            string `yaml:"env" env:"ENV" end-default:"local"`
 	BotToken       string `yaml:"bottoken" env-required:"true"`
 	OpenWeatherKey string `yaml:"openweatherkey" env-required:"true"`
+	HuggingFaceKey string `yaml:"huggingfacekey" env-required:"true"`
 	WebhookURL     string `yaml:"webhookurl"`
 	Port           string `yaml:"port"`
 }

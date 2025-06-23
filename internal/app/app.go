@@ -5,6 +5,7 @@ import (
 	"os"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/m1al04949/weatherbot/internal/clients/huggingface"
 	"github.com/m1al04949/weatherbot/internal/clients/openweather"
 	"github.com/m1al04949/weatherbot/internal/config"
 	"github.com/m1al04949/weatherbot/internal/handler"
@@ -34,10 +35,12 @@ func RunBot() error {
 
 	log.Info("Authorized on account", slog.String("botname", bot.Self.UserName))
 
-	// Initialize OpenWeather cliens
+	// Initialize OpenWeather client
 	owClient := openweather.New(cfg.OpenWeatherKey)
+	// Initialize Hugging Face client
+	hfClient := huggingface.New(cfg.HuggingFaceKey)
 	// Initialize Handler
-	handler := handler.New(log, bot, owClient)
+	handler := handler.New(log, bot, owClient, hfClient)
 
 	// Start listening
 	handler.Start()
