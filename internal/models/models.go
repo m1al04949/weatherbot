@@ -1,5 +1,7 @@
 package models
 
+import "time"
+
 type Cordinates struct {
 	Lat float64
 	Lon float64
@@ -46,4 +48,12 @@ type ForecastWeatherResponse struct {
 		} `json:"wind"`
 		Date string `json:"dt_txt"`
 	} `json:"list"`
+}
+
+type CacheWeather struct {
+	City      string
+	Lat       float64
+	Lon       float64
+	Weather   Weather
+	UpdatedAt time.Time
 }

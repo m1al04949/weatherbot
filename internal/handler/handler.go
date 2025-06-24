@@ -1,12 +1,14 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/m1al04949/weatherbot/internal/cache/redis"
 	"github.com/m1al04949/weatherbot/internal/clients/huggingface"
 	"github.com/m1al04949/weatherbot/internal/clients/openweather"
 	f "github.com/m1al04949/weatherbot/internal/lib/format"
@@ -18,17 +20,23 @@ type Handler struct {
 	bot      *tgbotapi.BotAPI
 	owClient *openweather.OpenWeatherClient
 	hfClient *huggingface.HuggingFaceClient
+	cache    *redis.WeatherCache
 }
 
 var currentLocation models.CordinatesResponse
 
 // Init handler
-func New(log *slog.Logger, bot *tgbotapi.BotAPI, owClient *openweather.OpenWeatherClient, hfClient *huggingface.HuggingFaceClient) *Handler {
+func New(
+	log *slog.Logger, bot *tgbotapi.BotAPI,
+	owClient *openweather.OpenWeatherClient,
+	hfClient *huggingface.HuggingFaceClient,
+	cache *redis.WeatherCache) *Handler {
 	return &Handler{
 		log:      log,
 		bot:      bot,
 		owClient: owClient,
 		hfClient: hfClient,
+		cache:    cache,
 	}
 }
 
@@ -72,29 +80,50 @@ func (h *Handler) handlerUpdate(update tgbotapi.Update) {
 		return
 	}
 
-	replyKeyboard := tgbotapi.NewReplyKeyboard(
-		tgbotapi.NewKeyboardButtonRow(
-			tgbotapi.NewKeyboardButton("Прогноз"),
-			tgbotapi.NewKeyboardButton("Назад"),
-		),
+	// Get current weather
+	var (
+		weather       *models.Weather
+		text          strings.Builder
+		replyKeyboard tgbotapi.ReplyKeyboardMarkup
 	)
-
-	// Get coordinates
-	cord, err := h.owClient.Coordinates(update.Message.Text)
+	// From cache
+	cacheWeather, err := h.cache.GetWeather(context.Background(), update.Message.Text)
 	if err != nil {
 		h.log.Error(err.Error())
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Такой населенный пункт не найден")
-		msg.ReplyToMessageID = update.Message.MessageID
-		msg.ReplyMarkup = replyKeyboard
-		h.bot.Send(msg)
-		return
+		// Request current weather
+		weather, err = h.messageCurrentWeather(&text, update)
+		if err != nil {
+			h.log.Error(err.Error())
+			replyKeyboard = tgbotapi.NewReplyKeyboard(
+				tgbotapi.NewKeyboardButtonRow(
+					tgbotapi.NewKeyboardButton("Назад"),
+				),
+			)
+		}
+	}
+	if cacheWeather != nil {
+		currentLocation.Name = cacheWeather.City
+		currentLocation.Lat = cacheWeather.Lat
+		currentLocation.Lon = cacheWeather.Lon
+		weather = &cacheWeather.Weather
+		h.log.Info("weather for from cache")
+		fmt.Println(cacheWeather)
+	}
+	if weather != nil {
+		text.WriteString(fmt.Sprintf("Прогноз погоды в населенном пункте %s. \n \n", currentLocation.Name))
+		text.WriteString(f.FormatWeatherMessage(*weather))
+		replyKeyboard = tgbotapi.NewReplyKeyboard(
+			tgbotapi.NewKeyboardButtonRow(
+				tgbotapi.NewKeyboardButton("Прогноз"),
+				tgbotapi.NewKeyboardButton("Назад"),
+			),
+		)
 	}
 
-	// Get Current weather
-	currentLocation.Name = update.Message.Text
-	currentLocation.Lat = cord.Lat
-	currentLocation.Lon = cord.Lon
-	h.messageCurrentWeather(update)
+	msg := tgbotapi.NewMessage(update.Message.Chat.ID, text.String())
+	msg.ReplyToMessageID = update.Message.MessageID
+	msg.ReplyMarkup = replyKeyboard
+	h.bot.Send(msg)
 }
 
 // /start message
@@ -115,7 +144,6 @@ func (h *Handler) messageStart(id int64) {
 
 	msg := tgbotapi.NewMessage(id, "Узнать погоду в населенном пункте")
 	msg.ReplyMarkup = replyKeyboard
-
 	h.bot.Send(msg)
 }
 
@@ -124,40 +152,28 @@ func (h *Handler) messageOther(id int64) {
 
 	msg := tgbotapi.NewMessage(id, "Введите имя населенного пункта")
 	msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(true)
-
 	h.bot.Send(msg)
 }
 
 // current weather message
-func (h *Handler) messageCurrentWeather(update tgbotapi.Update) {
-	var text strings.Builder
-
-	replyKeyboard := tgbotapi.NewReplyKeyboard(
-		tgbotapi.NewKeyboardButtonRow(
-			tgbotapi.NewKeyboardButton("Прогноз"),
-			tgbotapi.NewKeyboardButton("Назад"),
-		),
-	)
-
-	weather, err := h.owClient.CurrentWeather(currentLocation.Lat, currentLocation.Lon)
+func (h *Handler) messageCurrentWeather(text *strings.Builder, update tgbotapi.Update) (*models.Weather, error) {
+	cord, err := h.owClient.Coordinates(update.Message.Text)
 	if err != nil {
-		h.log.Error(err.Error())
-		msg := tgbotapi.NewMessage(
-			update.Message.Chat.ID,
-			fmt.Sprintf("Погода в населенном пункте %s не определена", update.Message.Text))
-		msg.ReplyToMessageID = update.Message.MessageID
-		msg.ReplyMarkup = replyKeyboard
-		h.bot.Send(msg)
-		return
+		text.WriteString("Такой населенный пункт не найден")
+		return nil, err
 	}
 
-	text.WriteString(fmt.Sprintf("Прогноз погоды в населенном пункте %s. \n \n", currentLocation.Name))
-	text.WriteString(f.FormatWeatherMessage(*weather))
+	weather, err := h.owClient.CurrentWeather(cord.Lat, cord.Lon)
+	if err != nil {
+		text.WriteString(fmt.Sprintf("Погода в населенном пункте %s не определена", update.Message.Text))
+		return nil, err
+	}
 
-	msg := tgbotapi.NewMessage(update.Message.Chat.ID, text.String())
-	msg.ReplyToMessageID = update.Message.MessageID
-	msg.ReplyMarkup = replyKeyboard
-	h.bot.Send(msg)
+	currentLocation.Name = update.Message.Text
+	currentLocation.Lat = cord.Lat
+	currentLocation.Lon = cord.Lon
+
+	return weather, nil
 }
 
 // forecast message handler

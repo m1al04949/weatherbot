@@ -1,14 +1,18 @@
 package app
 
 import (
+	"context"
 	"log/slog"
 	"os"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/m1al04949/weatherbot/internal/cache/redis"
 	"github.com/m1al04949/weatherbot/internal/clients/huggingface"
 	"github.com/m1al04949/weatherbot/internal/clients/openweather"
 	"github.com/m1al04949/weatherbot/internal/config"
 	"github.com/m1al04949/weatherbot/internal/handler"
+	"github.com/m1al04949/weatherbot/internal/repositories/cacherepository"
 )
 
 const (
@@ -33,14 +37,22 @@ func RunBot() error {
 	}
 	bot.Debug = true
 
-	log.Info("Authorized on account", slog.String("botname", bot.Self.UserName))
+	log.Info("authorized on account", slog.String("botname", bot.Self.UserName))
 
 	// Initialize OpenWeather client
 	owClient := openweather.New(cfg.OpenWeatherKey)
 	// Initialize Hugging Face client
 	hfClient := huggingface.New(cfg.HuggingFaceKey)
+	// Initialize Cache
+	cache := redis.NewCache(cfg.CacheAddr, cfg.CachePass, cfg.CacheDB, time.Duration(cfg.CacheTTL)*time.Minute)
+	// Initialize repositories
+	cacheRep := cacherepository.New(cfg, log, cache)
+	// Freshing cache
+	func() {
+		go cacheRep.FreshCache(context.Background(), log, owClient)
+	}()
 	// Initialize Handler
-	handler := handler.New(log, bot, owClient, hfClient)
+	handler := handler.New(log, bot, owClient, hfClient, cache)
 
 	// Start listening
 	handler.Start()

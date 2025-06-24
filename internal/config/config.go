@@ -15,17 +15,25 @@ type Config struct {
 	HuggingFaceKey string `yaml:"huggingfacekey" env-required:"true"`
 	WebhookURL     string `yaml:"webhookurl"`
 	Port           string `yaml:"port"`
+	Cache          `yaml:"cache"`
+}
+
+type Cache struct {
+	CacheAddr string `yaml:"cacheaddr" env-required:"true"`
+	CachePass string `yaml:"cachepass"`
+	CacheDB   int    `yaml:"cachedb"`
+	CacheTTL  int    `yaml:"cachettl" env-required:"true"`
 }
 
 func MustLoad() *Config {
 	err := godotenv.Load()
 	if err != nil {
-		log.Fatal("Error loading .env file")
+		log.Fatal("error loading .env file")
 	}
 
 	configPath := os.Getenv("CFG_PATH")
 	if configPath == "" {
-		log.Fatal("Config path is not set")
+		log.Fatal("config path is not set")
 	}
 
 	//check if file exists
