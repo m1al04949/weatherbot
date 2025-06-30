@@ -16,13 +16,20 @@ type Config struct {
 	WebhookURL     string `yaml:"webhookurl"`
 	Port           string `yaml:"port"`
 	Cache          `yaml:"cache"`
+	Broker         `yaml:"broker"`
 }
 
 type Cache struct {
-	CacheAddr string `yaml:"cacheaddr" env-required:"true"`
-	CachePass string `yaml:"cachepass"`
-	CacheDB   int    `yaml:"cachedb"`
-	CacheTTL  int    `yaml:"cachettl" env-required:"true"`
+	Address  string `yaml:"address" env-required:"true"`
+	Password string `yaml:"password"`
+	DB       int    `yaml:"db"`
+	TTL      int    `yaml:"ttl" env-required:"true"`
+}
+
+type Broker struct {
+	Addrs   []string `yaml:"addrs" env-required:"true"`
+	Retry   int      `yaml:"retry"`
+	Timeout int      `yaml:"timeout"`
 }
 
 func MustLoad() *Config {
