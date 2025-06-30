@@ -28,7 +28,7 @@ func New(cfg *config.Config, log *slog.Logger, cache *redis.WeatherCache) *Cache
 
 func (cr *CacheRepository) FreshCache(ctx context.Context, log *slog.Logger, owClient *openweather.OpenWeatherClient) {
 	cities := []string{"Санкт-Петербург", "Москва", "Коломна", "Орск"}
-	ticker := time.NewTicker(time.Duration(cr.Cfg.CacheTTL) * time.Minute)
+	ticker := time.NewTicker(time.Duration(cr.Cfg.TTL) * time.Minute)
 	defer ticker.Stop()
 
 	log.Info("freshing cache is started")

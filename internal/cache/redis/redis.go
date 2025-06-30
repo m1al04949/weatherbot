@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -13,9 +14,10 @@ import (
 type WeatherCache struct {
 	client *redis.Client
 	ttl    time.Duration
+	log    *slog.Logger
 }
 
-func NewCache(addr, password string, db int, ttl time.Duration) *WeatherCache {
+func NewCache(addr, password string, db int, ttl time.Duration, log *slog.Logger) *WeatherCache {
 	return &WeatherCache{
 		client: redis.NewClient(&redis.Options{
 			Addr:     addr,
@@ -23,6 +25,7 @@ func NewCache(addr, password string, db int, ttl time.Duration) *WeatherCache {
 			DB:       db,
 		}),
 		ttl: ttl,
+		log: log,
 	}
 }
 
@@ -62,6 +65,15 @@ func (c *WeatherCache) UpdateWeather(ctx context.Context, weather models.CacheWe
 		return fmt.Errorf("%s: %w", op, err)
 	}
 
+	return nil
+}
+
+// Shutdown
+func (c *WeatherCache) Close() error {
+	if err := c.client.Close(); err != nil {
+		return fmt.Errorf("error closing cache: %w", err)
+	}
+	c.log.Info("cache closed successfully")
 	return nil
 }
 

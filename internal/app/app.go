@@ -4,9 +4,13 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/m1al04949/weatherbot/internal/broker/kafka"
 	"github.com/m1al04949/weatherbot/internal/cache/redis"
 	"github.com/m1al04949/weatherbot/internal/clients/huggingface"
 	"github.com/m1al04949/weatherbot/internal/clients/openweather"
@@ -22,6 +26,11 @@ const (
 )
 
 func RunBot() error {
+	var wg sync.WaitGroup
+
+	// Get context
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
 	// Initialize config
 	cfg := config.MustLoad()
 	// Initialize logger
@@ -44,18 +53,46 @@ func RunBot() error {
 	// Initialize Hugging Face client
 	hfClient := huggingface.New(cfg.HuggingFaceKey)
 	// Initialize Cache
-	cache := redis.NewCache(cfg.CacheAddr, cfg.CachePass, cfg.CacheDB, time.Duration(cfg.CacheTTL)*time.Minute)
+	cache := redis.NewCache(
+		cfg.Cache.Address, cfg.Cache.Password, cfg.Cache.DB,
+		time.Duration(cfg.Cache.TTL)*time.Minute, log)
 	// Initialize repositories
 	cacheRep := cacherepository.New(cfg, log, cache)
 	// Freshing cache
+	wg.Add(1)
 	func() {
-		go cacheRep.FreshCache(context.Background(), log, owClient)
+		defer wg.Done()
+		go cacheRep.FreshCache(ctx, log, owClient)
 	}()
+	// Initialize broker: producer and consumer
+	producer, err := kafka.NewProducer(cfg.Broker.Addrs, log)
+	if err != nil {
+		return err
+	}
+	consumer, err := kafka.NewConsumer(cfg.Broker.Addrs, log)
+	if err != nil {
+		return err
+	}
 	// Initialize Handler
-	handler := handler.New(log, bot, owClient, hfClient, cache)
+	handler := handler.New(log, bot, owClient, hfClient, cache, producer, consumer)
 
 	// Start listening
-	handler.Start()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		handler.Start(ctx)
+	}()
+
+	// Graceful shutdown
+	<-ctx.Done()
+	log.Info("shutting down...")
+
+	cache.Close()
+	producer.Close()
+	consumer.Close()
+
+	wg.Wait()
+	log.Info("shutdown complete")
 
 	return nil
 }

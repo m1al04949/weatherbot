@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/m1al04949/weatherbot/internal/broker/kafka"
 	"github.com/m1al04949/weatherbot/internal/cache/redis"
 	"github.com/m1al04949/weatherbot/internal/clients/huggingface"
 	"github.com/m1al04949/weatherbot/internal/clients/openweather"
@@ -21,6 +22,8 @@ type Handler struct {
 	owClient *openweather.OpenWeatherClient
 	hfClient *huggingface.HuggingFaceClient
 	cache    *redis.WeatherCache
+	producer *kafka.Producer
+	consumer *kafka.Consumer
 }
 
 var currentLocation models.CordinatesResponse
@@ -30,29 +33,39 @@ func New(
 	log *slog.Logger, bot *tgbotapi.BotAPI,
 	owClient *openweather.OpenWeatherClient,
 	hfClient *huggingface.HuggingFaceClient,
-	cache *redis.WeatherCache) *Handler {
+	cache *redis.WeatherCache,
+	producer *kafka.Producer,
+	consumer *kafka.Consumer) *Handler {
 	return &Handler{
 		log:      log,
 		bot:      bot,
 		owClient: owClient,
 		hfClient: hfClient,
 		cache:    cache,
+		producer: producer,
+		consumer: consumer,
 	}
 }
 
-func (h *Handler) Start() {
+func (h *Handler) Start(ctx context.Context) {
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
 
 	updates := h.bot.GetUpdatesChan(u)
+
 	// Check updates
-	for update := range updates {
-		h.handlerUpdate(update)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case update := <-updates:
+			h.handlerUpdate(ctx, update)
+		}
 	}
 }
 
 // Processing new updates
-func (h *Handler) handlerUpdate(update tgbotapi.Update) {
+func (h *Handler) handlerUpdate(ctx context.Context, update tgbotapi.Update) {
 	if update.Message == nil {
 		return
 	}
@@ -87,7 +100,7 @@ func (h *Handler) handlerUpdate(update tgbotapi.Update) {
 		replyKeyboard tgbotapi.ReplyKeyboardMarkup
 	)
 	// From cache
-	cacheWeather, err := h.cache.GetWeather(context.Background(), update.Message.Text)
+	cacheWeather, err := h.cache.GetWeather(ctx, update.Message.Text)
 	if err != nil {
 		h.log.Error(err.Error())
 		// Request current weather
@@ -106,8 +119,7 @@ func (h *Handler) handlerUpdate(update tgbotapi.Update) {
 		currentLocation.Lat = cacheWeather.Lat
 		currentLocation.Lon = cacheWeather.Lon
 		weather = &cacheWeather.Weather
-		h.log.Info("weather for from cache")
-		fmt.Println(cacheWeather)
+		h.log.Info("getting weather from cache")
 	}
 	if weather != nil {
 		text.WriteString(fmt.Sprintf("Прогноз погоды в населенном пункте %s. \n \n", currentLocation.Name))
@@ -214,8 +226,10 @@ func (h *Handler) messageForecast(update tgbotapi.Update) {
 		}
 
 		// Today
-		if itemTime.Format(f.DateFormat) == todayDate && itemTime.Hour() > time.Now().Hour() {
-			todayForecast = append(todayForecast, item)
+		if itemTime.Format(f.DateFormat) == todayDate {
+			if itemTime.Hour() > time.Now().Hour() {
+				todayForecast = append(todayForecast, item)
+			}
 			continue
 		}
 
