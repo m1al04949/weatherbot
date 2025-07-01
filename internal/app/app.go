@@ -10,7 +10,6 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/m1al04949/weatherbot/internal/broker/kafka"
 	"github.com/m1al04949/weatherbot/internal/cache/redis"
 	"github.com/m1al04949/weatherbot/internal/clients/huggingface"
 	"github.com/m1al04949/weatherbot/internal/clients/openweather"
@@ -36,8 +35,7 @@ func RunBot() error {
 	// Initialize logger
 	log := setupLogger(cfg.Env)
 
-	log.Info("starting application",
-		slog.Any("cfg", cfg))
+	log.Info("starting application", slog.Any("cfg", cfg))
 
 	// Start bot
 	bot, err := tgbotapi.NewBotAPI(cfg.BotToken)
@@ -60,23 +58,14 @@ func RunBot() error {
 	cacheRep := cacherepository.New(cfg, log, cache)
 	// Freshing cache
 	wg.Add(1)
-	func() {
+	go func() {
 		defer wg.Done()
-		go cacheRep.FreshCache(ctx, log, owClient)
+		cacheRep.FreshCache(ctx, log, owClient)
 	}()
-	// Initialize broker: producer and consumer
-	producer, err := kafka.NewProducer(cfg.Broker.Addrs, log)
-	if err != nil {
-		return err
-	}
-	consumer, err := kafka.NewConsumer(cfg.Broker.Addrs, log)
-	if err != nil {
-		return err
-	}
 	// Initialize Handler
-	handler := handler.New(log, bot, owClient, hfClient, cache, producer, consumer)
+	handler := handler.New(log, bot, owClient, hfClient, cache)
 
-	// Start listening
+	// Start listening telegram messages
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -88,8 +77,6 @@ func RunBot() error {
 	log.Info("shutting down...")
 
 	cache.Close()
-	producer.Close()
-	consumer.Close()
 
 	wg.Wait()
 	log.Info("shutdown complete")

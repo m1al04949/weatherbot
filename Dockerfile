@@ -15,4 +15,4 @@ COPY . .
 RUN go build -o bot
 
 # Запускаем бота
-CMD ["./bot"]
+CMD ["./cmd/weatherbot"]

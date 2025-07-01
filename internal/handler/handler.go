@@ -8,7 +8,6 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/m1al04949/weatherbot/internal/broker/kafka"
 	"github.com/m1al04949/weatherbot/internal/cache/redis"
 	"github.com/m1al04949/weatherbot/internal/clients/huggingface"
 	"github.com/m1al04949/weatherbot/internal/clients/openweather"
@@ -22,8 +21,6 @@ type Handler struct {
 	owClient *openweather.OpenWeatherClient
 	hfClient *huggingface.HuggingFaceClient
 	cache    *redis.WeatherCache
-	producer *kafka.Producer
-	consumer *kafka.Consumer
 }
 
 var currentLocation models.CordinatesResponse
@@ -34,16 +31,13 @@ func New(
 	owClient *openweather.OpenWeatherClient,
 	hfClient *huggingface.HuggingFaceClient,
 	cache *redis.WeatherCache,
-	producer *kafka.Producer,
-	consumer *kafka.Consumer) *Handler {
+) *Handler {
 	return &Handler{
 		log:      log,
 		bot:      bot,
 		owClient: owClient,
 		hfClient: hfClient,
 		cache:    cache,
-		producer: producer,
-		consumer: consumer,
 	}
 }
 
